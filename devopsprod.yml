@@ -1,0 +1,144 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: DevOps Prod
+
+Metadata: LAMP stack and WordPress will be installed and configured by Ansible.  
+
+Resources: 
+  DereksVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: DereksVPC
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref DereksVPC
+
+  DereksPublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DereksVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.0.0.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: DereksPublicSubnet
+  
+  DereksPrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: 
+        Ref: DereksVPC
+      AvailabilityZone: !Select [ 0, !GetAZs  '' ]
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: DereksPrivateSubnet
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: 
+        Ref: DereksVPC
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: 
+        Ref: PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: 
+        Ref: InternetGateway
+
+  DereksPublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: 
+        Ref: PublicRouteTable
+      SubnetId: 
+        Ref: DereksPublicSubnet
+  
+  DereksPrivateSG:
+    Type: AWS::EC2::SecurityGroup 
+    Properties:
+      GroupDescription: Only allow SSH from Public Subnet
+      VpcId:
+         Ref: DereksVPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 3306
+        ToPort: 3306
+        CidrIp: 10.0.0.0/24
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 3306
+        ToPort: 3306
+        CidrIp: 10.0.0.0/24
+  
+  DereksPublicSG: 
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow http to client host
+      VpcId:
+       Ref: DereksVPC
+      SecurityGroupIngress:
+       - IpProtocol: tcp
+         FromPort: 80
+         ToPort: 80
+         CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  AnsibleControlServer: 
+    Type: AWS::EC2::Instance
+    Condition: CreatePublicInstance
+    Properties: 
+      ImageId: "ami-04b9e92b5572fa0d1"
+      SecurityGroups:
+        Ref: DereksPublicSG
+      InstanceType: t2.micro 
+      KeyName: "myfromscratchvpc"
+      SubnetId: 
+        Ref: DereksPublicSubnet
+      UserData:
+        Fn::Base64: |
+           #!/bin/bash
+            sudo apt-get install software-properties-common
+            sudo apt-add-repository -y ppa:ansible/ansible
+            sudo apt-get update
+            sudo apt-get install -y ansible
+
+ WordPressServer: 
+    Type: AWS::EC2::Instance
+    Properties: 
+      ImageId: "ami-04b9e92b5572fa0d1"
+      SecurityGroups:
+        Ref: DereksPublicSG
+      InstanceType: t2.micro 
+      KeyName: "myfromscratchvpc"
+      SubnetId: 
+        Ref: DereksPublicSubnet
+  
+  DBServer: 
+    Type: AWS::EC2::Instance
+    Properties: 
+      ImageId: "ami-04b9e92b5572fa0d1"
+      SecurityGroups:
+        Ref: DereksPrivateSG
+      InstanceType: t2.micro 
+      KeyName: "myfromscratchvpc"
+      SubnetId: 
+        Ref: DereksPrivateSubnet
